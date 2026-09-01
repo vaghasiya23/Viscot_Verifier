@@ -1,0 +1,61 @@
+[
+  {
+    "id": "2331819",
+    "image_file": "2331819.jpg",
+    "question": "Who is wearing a shirt?",
+    "input_messy_cot": "1. We are looking for someone who is wearing a shirt in the image. 2. First, let's identify all the people in the image. 3. Next, we need to determine who among the people is wearing a shirt. 4. After identifying the person, we can state the answer based on the observation from the image.",
+    "golden_target": {
+      "thought": "I need to extract the entities (person, shirt) and verify the spatial relationship (wearing/overlapping) between them.",
+      "extract_claims": [
+        "1. There is a person.",
+        "2. There is a shirt.",
+        "3. The person is wearing the shirt."
+      ],
+      "tool_verification": [
+        "# Claim 1: Person exists",
+        "person_boxes = detect_and_crop(img, 'person')",
+        "assert len(person_boxes) >= 1, 'No person detected.'",
+        "",
+        "# Claim 2: Shirt exists",
+        "shirt_boxes = detect_and_crop(img, 'shirt')",
+        "assert len(shirt_boxes) >= 1, 'No shirt detected.'",
+        "",
+        "# Claim 3: Person is wearing shirt",
+        "is_wearing = check_spatial_relation(person_boxes[0], shirt_boxes[0], 'overlapping')",
+        "assert is_wearing == True, 'The person is not wearing the shirt.'"
+      ]
+    }
+  },
+  {
+    "id": "2324496",
+    "image_file": "2324496.jpg",
+    "question": "What do you think is he sleeping in?",
+    "input_messy_cot": "1. The subject in the image is a man. 2. He is shown in a lying down position with his eyes closed. 3. We can infer that he is sleeping based on his posture and closed eyes. 4. To determine what he is sleeping in, we need to identify the object or location where he is resting. 5. We should look for the object or location that is related to his sleeping position. 6. The most probable object or location for him to be sleeping in is a bed. 7. Therefore, we can conclude that the man is sleeping in the bed.",
+    "golden_target": {
+      "thought": "I need to detect the man, verify his state (sleeping) using the VLM probe, detect the bed, and verify he is in it.",
+      "extract_claims": [
+        "1. There is a man.",
+        "2. The man is sleeping.",
+        "3. There is a bed.",
+        "4. The man is in the bed."
+      ],
+      "tool_verification": [
+        "# Claim 1: Man exists",
+        "man_boxes = detect_and_crop(img, 'man')",
+        "assert len(man_boxes) >= 1, 'No man detected.'",
+        "",
+        "# Claim 2: Man is sleeping (Abstract state)",
+        "is_sleeping = vlm_probe(img, man_boxes[0], 'Is this man sleeping?')",
+        "assert is_sleeping == True, 'The man is not sleeping.'",
+        "",
+        "# Claim 3: Bed exists",
+        "bed_boxes = detect_and_crop(img, 'bed')",
+        "assert len(bed_boxes) >= 1, 'No bed detected.'",
+        "",
+        "# Claim 4: Man in bed",
+        "in_bed = check_spatial_relation(man_boxes[0], bed_boxes[0], 'inside')",
+        "assert in_bed == True, 'The man is not in the bed.'"
+      ]
+    }
+  }
+]

@@ -1,0 +1,416 @@
+[
+    {
+        "question": "Who is wearing a shirt?",
+        "answer": "girl",
+        "full_answer": "The girl is wearing a shirt.",
+        "image": "2331819.jpg",
+        "width": 500,
+        "height": 375,
+        "bboxs": [
+            [
+                214,
+                0,
+                433,
+                374
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "shirt (4653737)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "person,wearing,s (4653736)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. We are looking for someone who is wearing a shirt in the image. 2. First, let's identify all the people in the image. 3. Next, we need to determine who among the people is wearing a shirt. 4. After identifying the person, we can state the answer based on the observation from the image."
+    },
+    {
+        "question": "What do you think is he sleeping in?",
+        "answer": "bed",
+        "full_answer": "The man is sleeping in the bed.",
+        "image": "2324496.jpg",
+        "width": 500,
+        "height": 375,
+        "bboxs": [
+            [
+                0,
+                100,
+                500,
+                376
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "he (987642)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "_,sleeping in,o (987643)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. The subject in the image is a man. 2. He is shown in a lying down position with his eyes closed. 3. We can infer that he is sleeping based on his posture and closed eyes. 4. To determine what he is sleeping in, we need to identify the object or location where he is resting. 5. We should look for the object or location that is related to his sleeping position. 6. The most probable object or location for him to be sleeping in is a bed. 7. Therefore, we can conclude that the man is sleeping in the bed."
+    },
+    {
+        "question": "What is the piece of furniture that he is sleeping in?",
+        "answer": "bed",
+        "full_answer": "The piece of furniture is a bed.",
+        "image": "2324496.jpg",
+        "width": 500,
+        "height": 375,
+        "bboxs": [
+            [
+                0,
+                100,
+                500,
+                376
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "he (987642)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "furniture,sleeping in,o (987643)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. We need to identify the piece of furniture that the person in the image is sleeping in. 2. First, we need to focus on the person in the image. 3. Next, we need to determine the relationship between the person and the piece of furniture he is sleeping in. 4. The person is \"sleeping in\" a piece of furniture. 5. Now, we need to find out the name of the piece of furniture the person is sleeping in."
+    },
+    {
+        "question": "What kind of furniture is to the right of the chair?",
+        "answer": "sofa",
+        "full_answer": "The piece of furniture is a sofa.",
+        "image": "2410353.jpg",
+        "width": 500,
+        "height": 471,
+        "bboxs": [
+            [
+                273,
+                256,
+                452,
+                356
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "chair (219758)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "furniture,to the right of,s (219755)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. Identify the object labeled as \"chair\" in the image. 2. Determine the direction to the right of the chair. 3. Look for any furniture located in that direction. 4. Identify the type of furniture to the right of the chair."
+    },
+    {
+        "question": "Which kind of furniture are the cups hanging on?",
+        "answer": "cabinet",
+        "full_answer": "The cups are hanging on the cabinet.",
+        "image": "2378822.jpg",
+        "width": 375,
+        "height": 500,
+        "bboxs": [
+            [
+                36,
+                44,
+                239,
+                156
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "cups (1364174)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "furniture,hanging on,o (1364169)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. We are given an image showing cups hanging on a piece of furniture. 2. We need to determine which kind of furniture the cups are hanging on. 3. First, we identify the cups in the image. 4. Next, we observe the relationship between the cups and the piece of furniture they are hanging on. 5. We extract the type of furniture the cups are hanging on from the image."
+    },
+    {
+        "question": "What animal sits in the bench that is on the right side?",
+        "answer": "bird",
+        "full_answer": "The animal is a bird.",
+        "image": "2355018.jpg",
+        "width": 500,
+        "height": 300,
+        "bboxs": [
+            [
+                170,
+                9,
+                399,
+                268
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "bench (3060938)"
+            },
+            {
+                "operation": "filter hposition",
+                "dependencies": [
+                    0
+                ],
+                "argument": "right"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    1
+                ],
+                "argument": "animal,sitting in,s (1901864)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    2
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. Select the bench in the image. 2. Filter the selected bench by its horizontal position to identify the one on the right side. 3. Relate the position of an animal sitting in the previously identified bench. 4. Query the name of the animal sitting in the right-side bench. 5. The animal sitting in the right-side bench is a bird."
+    },
+    {
+        "question": "What are the children on?",
+        "answer": "rock",
+        "full_answer": "The children are on the rock.",
+        "image": "2355658.jpg",
+        "width": 500,
+        "height": 375,
+        "bboxs": [
+            [
+                392,
+                130,
+                500,
+                240
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "children (827627)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "_,on,o (827624)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. We need to identify the location of the children in the image. 2. The location of the children can be determined by finding the relationship between the children and the object they are on. 3. We will look for a relationship that indicates the position of the children in relation to another object. 4. By querying the name of the object the children are on, we can determine the precise location."
+    },
+    {
+        "question": "Who is on the rock?",
+        "answer": "children",
+        "full_answer": "The kids are on the rock.",
+        "image": "2355658.jpg",
+        "width": 500,
+        "height": 375,
+        "bboxs": [
+            [
+                404,
+                163,
+                452,
+                212
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "rock (827624)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "person,on,s (827627)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. Select the rock in the image. 2. Relate the concept of a person being on the rock. 3. Query the names of the person or people on the rock."
+    },
+    {
+        "question": "What is the man in the street wearing?",
+        "answer": "pants",
+        "full_answer": "The man is wearing pants.",
+        "image": "2396833.jpg",
+        "width": 500,
+        "height": 500,
+        "bboxs": [
+            [
+                297,
+                288,
+                324,
+                348
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "street (440135)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "man,in,s (440139)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    1
+                ],
+                "argument": "_,wearing,o (440140)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    2
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. We start by selecting the \"street\" entity in the image. 2. Next, we need to relate the \"man\" in the street. 3. After that, we relate the action \"wearing\" to the man. 4. Finally, we query the specific item of clothing the man is wearing."
+    },
+    {
+        "question": "Which kind of animal is in the field?",
+        "answer": "horse",
+        "full_answer": "The animal is a horse.",
+        "image": "2320386.jpg",
+        "width": 500,
+        "height": 375,
+        "bboxs": [
+            [
+                122,
+                211,
+                152,
+                238
+            ]
+        ],
+        "dataset": "gqa",
+        "split": "train",
+        "reasoning": [
+            {
+                "operation": "select",
+                "dependencies": [],
+                "argument": "field (2898604)"
+            },
+            {
+                "operation": "relate",
+                "dependencies": [
+                    0
+                ],
+                "argument": "animal,in,s (2829924)"
+            },
+            {
+                "operation": "query",
+                "dependencies": [
+                    1
+                ],
+                "argument": "name"
+            }
+        ],
+        "thought": "1. We need to identify the kind of animal that is in the field.  2. First, we should look at the field in the image to determine what is present there. 3. Next, we can relate the concept of \"animal\" to what we see in the field to identify the animal. 4. Finally, we can query for the name of the animal to determine its kind."
+    }
+]
