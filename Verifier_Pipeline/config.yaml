@@ -1,0 +1,16 @@
+models:
+  coder: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  detector: "google/owlv2-base-patch16-ensemble"
+  prober: "Qwen/Qwen2-VL-2B-Instruct"
+
+generation:
+  num_candidates_stage_A: 5
+  temperature: 0.6
+  max_tokens: 1024
+
+data:
+  raw_json: "data/raw/gqa_300_samples.json"
+  images_dir: "data/raw/images"
+
+pipeline:
+  mock_vlm_mode: false  # REAL VLM backend is now wired in

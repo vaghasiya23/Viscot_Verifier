@@ -1,0 +1,20 @@
+[
+    {
+        "image": "2331819.jpg",
+        "question": "Who is wearing a shirt?",
+        "answer": "girl",
+        "input_cot": "1. We are looking for someone who is wearing a shirt in the image. 2. First, let's identify all the people in the image. 3. Next, we need to determine who among the people is wearing a shirt. 4. After identifying the person, we can state the answer based on the observation from the image.",
+        "golden_target": "<thought>\nThe scaffold requires detecting a shirt, detecting a person, verifying the \"wearing\" relation, and determining the person's name to answer the question.\n</thought>\n<extract_claims>\n1. There is a shirt in the image.\n2. There is a person in the image.\n3. The person is wearing the shirt.\n4. The name of the person answers the question.\n</extract_claims>\n<tool_verification>\n```python\ne0 = detect_and_crop(img_path, \"shirt\")\nassert len(e0) > 0, \"No shirt detected\"\n\ne1_candidates = detect_and_crop(img_path, \"person\")\nassert len(e1_candidates) > 0, \"No person detected\"\n\nwearing_shirt = []\nfor p in e1_candidates:\n    if vlm_probe(img_path, p, \"wearing\"):\n        wearing_shirt.append(p)\nassert len(wearing_shirt) > 0, \"No person found wearing the shirt\"\n\nfinal_answer = \"girl\"  # entity label that satisfied the relation\n```\n</tool_verification>\n<final_verdict>\nINVALID. Claim 3 failed because no person was found wearing the shirt. The derived answer does not match the ground truth answer \"girl\".\n</final_verdict>",
+        "verdict": "INVALID. Claim 3 failed because no person was found wearing the shirt. The derived answer does not match the ground truth answer \"girl\".",
+        "num_valid_of_total": "1/2"
+    },
+    {
+        "image": "2324496.jpg",
+        "question": "What do you think is he sleeping in?",
+        "answer": "bed",
+        "input_cot": "1. The subject in the image is a man. 2. He is shown in a lying down position with his eyes closed. 3. We can infer that he is sleeping based on his posture and closed eyes. 4. To determine what he is sleeping in, we need to identify the object or location where he is resting. 5. We should look for the object or location that is related to his sleeping position. 6. The most probable object or location for him to be sleeping in is a bed. 7. Therefore, we can conclude that the man is sleeping in the bed.",
+        "golden_target": "<thought>\nThe scaffold requires detecting a \"he\", verifying the \"sleeping in\" relation, and identifying the object that answers the question. Let's follow the steps precisely.\n</thought>\n<extract_claims>\n1. There is a \"he\" in the image.\n2. The \"he\" is sleeping in something.\n3. The name of the entity from step 2 answers the question.\n</extract_claims>\n<tool_verification>\n```python\ne0 = detect_and_crop(img_path, \"he\")\nassert len(e0) > 0, \"No 'he' detected\"\n\n# Verify the \"sleeping in\" relation using vlm_probe\ne1_candidates = detect_and_crop(img_path, [\"bed\", \"chair\", \"couch\"])\nassert len(e1_candidates) > 0, \"No suitable object detected for sleeping in\"\n\nsleeping_in_objects = []\nfor obj in e1_candidates:\n    if vlm_probe(img_path, obj, \"is he sleeping in this?\"):\n        sleeping_in_objects.append(obj)\n\nassert len(sleeping_in_objects) > 0, \"No object confirmed as he is sleeping in\"\n\nfinal_answer = read_text_ocr(img_path, sleeping_in_objects[0])\n```\n</tool_verification>\n<final_verdict>\nINVALID. Claim 2 failed. No object was confirmed as the thing he is sleeping in using the `vlm_probe`. The derived answer does not match the ground-truth answer \"bed\".\n</final_verdict>",
+        "verdict": "INVALID. Claim 2 failed. No object was confirmed as the thing he is sleeping in using the `vlm_probe`. The derived answer does not match the ground-truth answer \"bed\".",
+        "num_valid_of_total": "2/2"
+    }
+]
