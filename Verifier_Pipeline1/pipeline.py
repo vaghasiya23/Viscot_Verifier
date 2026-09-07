@@ -23,13 +23,13 @@ import os
 import sys
 import argparse
 import yaml
+from datetime import datetime
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
 from generation.skeleton_gen import build_scaffold, build_generation_prompt
-from generation.trace_gen import CoderModel, generate_candidate, extract_code_block, extract_verdict
-from filters import execution_filter, outcome_filter, coverage_filter, arg_validity_filter
+from generation.trace_gen import GeminiCoderModel, CoderModel, generate_candidate, extract_code_block, extract_verdict
 
 
 def load_config():
@@ -52,20 +52,44 @@ def save_json(data, filepath):
     print(f"  Saved {len(data)} entries to {filepath}")
 
 
-def run_pipeline(num_samples=5, num_candidates=5):
+def run_pipeline(num_samples=5, num_candidates=None, output_dir=None, model=None):
     config = load_config()
+    if num_candidates is None:
+        num_candidates = config["generation"].get("num_candidates_stage_A", 2)
+    stop_after_valid = config["generation"].get("stop_after_valid", 1)
     samples = load_samples(config, num_samples)
 
     print(f"\n{'='*60}")
     print(f"Stage A Pipeline — {len(samples)} samples, {num_candidates} candidates each")
     print(f"{'='*60}\n")
 
-    coder = CoderModel(model_name=config["models"]["coder"])
+    model_name = model or config["models"]["coder"]
+    if config["models"].get("coder_provider") == "gemini":
+        coder = GeminiCoderModel(
+            model_name=model_name,
+            min_interval_seconds=config["generation"].get("min_interval_seconds", 30),
+            max_retries=config["generation"].get("max_retries", 3),
+            thinking_level=config["generation"].get("thinking_level", "high"),
+        )
+    else:
+        coder = CoderModel(model_name=model_name)
+
+    # Load GPU vision backends only after argument and API-key validation.
+    from filters import execution_filter, outcome_filter, coverage_filter, arg_validity_filter
+    out_dir = output_dir or os.path.join(
+        ROOT, "data", "processed", "gemini_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    )
+    print(f"Output directory: {out_dir}")
 
     golden = []
     invalidated = []  # correctly-invalidated traces: real bugs found, negative data, NOT golden
     trash = []
     ambiguous = []
+
+    def checkpoint():
+        for name, entries in (("golden", golden), ("invalidated", invalidated),
+                              ("trash", trash), ("ambiguous", ambiguous)):
+            save_json(entries, os.path.join(out_dir, name, f"{name}_traces.json"))
 
     img_dir = os.path.join(ROOT, "data", "raw", "images")
 
@@ -81,6 +105,13 @@ def run_pipeline(num_samples=5, num_candidates=5):
 
         scaffold = build_scaffold(sample["reasoning"], sample)
         print(f"  Scaffold: {len(scaffold)} steps")
+        review = [step.get("review_reason", "Unsupported step") for step in scaffold if step["needs_review"]]
+        if not scaffold or review:
+            ambiguous.append({"image": sample["image"], "question": sample["question"],
+                              "filter": "scaffold_review", "error": "; ".join(review) or "Empty scaffold"})
+            print("  DEFER: " + ("; ".join(review) or "Empty scaffold"))
+            checkpoint()
+            continue
 
         img_path = os.path.join(img_dir, sample["image"])
         if not os.path.exists(img_path):
@@ -94,7 +125,14 @@ def run_pipeline(num_samples=5, num_candidates=5):
         for attempt in range(num_candidates):
             print(f"  Attempt {attempt+1}/{num_candidates}...")
 
-            candidate = generate_candidate(sample, coder, temperature=config["generation"]["temperature"])
+            try:
+                candidate = generate_candidate(
+                    sample, coder, temperature=config["generation"]["temperature"],
+                    max_new_tokens=config["generation"]["max_tokens"],
+                )
+            except (RuntimeError, KeyboardInterrupt):
+                checkpoint()
+                raise
             code = candidate["code"]
             verdict_text = candidate["verdict_text"]
 
@@ -120,23 +158,6 @@ def run_pipeline(num_samples=5, num_candidates=5):
                 })
                 continue
 
-            # --- FILTER 2: Execution ---
-            exec_result = execution_filter.run(code, img_path)
-            if not exec_result["ok"]:
-                error = exec_result["error"]
-                print(f"    => FAIL [execution]: {error}")
-                if exec_result.get("is_assertion") and ("ambiguous" in error.lower() or "multiple" in error.lower()):
-                    ambiguous.append({
-                        "image": sample["image"], "attempt": attempt + 1,
-                        "trace": candidate["raw_trace"], "error": error,
-                    })
-                else:
-                    trash.append({
-                        "image": sample["image"], "attempt": attempt + 1,
-                        "trace": candidate["raw_trace"], "filter": "execution", "error": error,
-                    })
-                continue
-
             # --- FILTER 3: Coverage ---
             cov_result = coverage_filter.check(code, scaffold)
             if not cov_result["passed"]:
@@ -147,6 +168,24 @@ def run_pipeline(num_samples=5, num_candidates=5):
                 })
                 continue
 
+            # --- FILTER 2: Execution ---
+            exec_result = execution_filter.run(code, img_path)
+            if not exec_result["ok"]:
+                error = exec_result["error"]
+                print(f"    => FAIL [execution]: {error}")
+                if any(word in error.lower() for word in ("uncertain", "ambiguous", "multiple", "timeout")):
+                    ambiguous.append({
+                        "image": sample["image"], "attempt": attempt + 1,
+                        "trace": candidate["raw_trace"], "error": error, "evidence": exec_result.get("evidence", []),
+                    })
+                else:
+                    trash.append({
+                        "image": sample["image"], "attempt": attempt + 1,
+                        "trace": candidate["raw_trace"], "filter": "execution", "error": error, "evidence": exec_result.get("evidence", []),
+                    })
+                # Same canonical code and deterministic vision tools would fail again.
+                break
+
             # --- FILTER 4: Outcome (now three-way) ---
             out_result = outcome_filter.check(exec_result, sample, verdict_text)
             status = out_result["status"]
@@ -156,7 +195,10 @@ def run_pipeline(num_samples=5, num_candidates=5):
                 trash.append({
                     "image": sample["image"], "attempt": attempt + 1,
                     "trace": candidate["raw_trace"], "filter": "outcome", "error": out_result["reason"],
+                    "evidence": exec_result.get("evidence", []),
                 })
+                if "Visual answer" in out_result["reason"]:
+                    break  # Another copy of the canonical program cannot change this result.
                 continue
 
             if status == "correctly_invalidated":
@@ -167,16 +209,25 @@ def run_pipeline(num_samples=5, num_candidates=5):
                 })
                 continue
 
+            # Serialize only runtime-supported claims/verdict into the SFT target.
+            claims = "\n".join(f"{j+1}. {step['claim_template']}" for j, step in enumerate(scaffold))
+            verified_verdict = f"VALID. All scaffold checks completed. Visual answer: {exec_result['local_scope']['final_answer']}."
+            verified_trace = ("<thought>Verify the listed claims using the executable checks below.</thought>\n"
+                              f"<extract_claims>\n{claims}\n</extract_claims>\n"
+                              f"<tool_verification>\n```python\n{code}\n```\n</tool_verification>\n"
+                              f"<final_verdict>{verified_verdict}</final_verdict>")
             # status == "valid"
             print(f"    => PASS (all 4 filters, VALID)")
             valid_candidates.append({
-                "trace": candidate["raw_trace"], "code": code, "verdict": verdict_text,
+                "trace": verified_trace, "source_trace": candidate["raw_trace"],
+                "evidence": exec_result["evidence"], "code": code, "verdict": verified_verdict,
                 "coverage": cov_result["coverage"], "code_len": len(code),
             })
 
-            if len(valid_candidates) >= 2:
+            if len(valid_candidates) >= stop_after_valid:
                 break
 
+        attempts_made = attempt + 1
         # --- SELECT BEST, per bucket ---
         if valid_candidates:
             best = sorted(valid_candidates, key=lambda x: (-x["coverage"], x["code_len"]))[0]
@@ -184,20 +235,25 @@ def run_pipeline(num_samples=5, num_candidates=5):
                 "image": sample["image"], "question": sample["question"],
                 "answer": sample.get("answer", ""), "input_cot": sample["thought"],
                 "golden_target": best["trace"], "verdict": best["verdict"],
-                "num_valid_of_total": f"{len(valid_candidates)}/{num_candidates}",
+                "source_trace": best["source_trace"], "evidence": best["evidence"],
+                "validation_version": "strict-v2", "generator_model": model_name,
+                "localization_source": "viscot_annotation" if any(s.get("localization_source") == "viscot_annotation" for s in scaffold) else "model",
+                "num_valid_of_total": f"{len(valid_candidates)}/{attempts_made}",
             })
-            print(f"  => SAVED TO GOLDEN ({len(valid_candidates)} valid out of {num_candidates} attempts)")
+            print(f"  => SAVED TO GOLDEN ({len(valid_candidates)} valid out of {attempts_made} attempts)")
         elif invalidated_candidates:
             best = sorted(invalidated_candidates, key=lambda x: (-x["coverage"], x["code_len"]))[0]
             invalidated.append({
                 "image": sample["image"], "question": sample["question"],
                 "answer": sample.get("answer", ""), "input_cot": sample["thought"],
                 "invalidated_target": best["trace"], "verdict": best["verdict"],
-                "num_invalidated_of_total": f"{len(invalidated_candidates)}/{num_candidates}",
+                "num_invalidated_of_total": f"{len(invalidated_candidates)}/{attempts_made}",
             })
-            print(f"  => SAVED TO INVALIDATED (real bug correctly caught, {len(invalidated_candidates)} of {num_candidates})")
+            print(f"  => SAVED TO INVALIDATED (real bug correctly caught, {len(invalidated_candidates)} of {attempts_made})")
         else:
-            print(f"  => EXHAUSTED ALL {num_candidates} ATTEMPTS. No golden or invalidated trace.")
+            print(f"  => STOPPED AFTER {attempts_made}/{num_candidates} ATTEMPTS. No golden or invalidated trace.")
+
+        checkpoint()
 
     print(f"\n{'='*60}")
     print(f"RESULTS:")
@@ -207,18 +263,25 @@ def run_pipeline(num_samples=5, num_candidates=5):
     print(f"  Ambiguous:   {len(ambiguous)}")
     print(f"{'='*60}")
 
-    out_dir = os.path.join(ROOT, "data", "processed")
     save_json(golden, os.path.join(out_dir, "golden", "golden_traces.json"))
     save_json(invalidated, os.path.join(out_dir, "invalidated", "invalidated_traces.json"))
     save_json(trash, os.path.join(out_dir, "trash", "trash_traces.json"))
     save_json(ambiguous, os.path.join(out_dir, "ambiguous", "ambiguous_traces.json"))
 
+    from audit_batch import audit_run
+    audit_run(out_dir)
     print("\nDone!")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage A Pipeline")
     parser.add_argument("--num_samples", type=int, default=5)
-    parser.add_argument("--num_candidates", type=int, default=5)
+    parser.add_argument("--num_candidates", "--num_candiadates", type=int, default=None,
+                        help="Maximum attempts per sample (default: config.yaml)")
+    parser.add_argument("--model", help="Override the configured coder model")
+    parser.add_argument("--output_dir", help="Output directory; default is a new timestamped run")
     args = parser.parse_args()
-    run_pipeline(num_samples=args.num_samples, num_candidates=args.num_candidates)
+    if args.num_samples < 1 or (args.num_candidates is not None and args.num_candidates < 1):
+        parser.error("num_samples and num_candidates must be positive")
+    run_pipeline(num_samples=args.num_samples, num_candidates=args.num_candidates,
+                 output_dir=args.output_dir, model=args.model)

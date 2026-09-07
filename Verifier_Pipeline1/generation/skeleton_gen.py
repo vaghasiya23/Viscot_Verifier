@@ -15,7 +15,7 @@ import re
 # Abstract super-categories that object detectors struggle with.
 # If these appear as entity labels, we suggest the specific target answer.
 ABSTRACT_CATEGORIES = {
-    "furniture", "animal", "vehicle", "object", "item", "clothing", "apparel", "food"
+    "furniture", "animal", "vehicle", "object", "item", "clothing", "apparel", "food", "fast food"
 }
 
 
@@ -30,7 +30,7 @@ def normalize_spatial_predicate(pred: str) -> str:
         return "above"
     if any(w in p for w in ["below", "under", "beneath", "lower than"]):
         return "below"
-    if any(w in p for w in ["inside", "within"]):
+    if p == "in" or any(w in p for w in ["inside", "within"]):
         return "inside"
     if any(w in p for w in ["near", "next to", "beside", "adjacent", "by"]):
         return "near"
@@ -45,18 +45,18 @@ def classify_predicate(pred: str) -> tuple:
     family is one of: 'spatial', 'depth', 'semantic'
     """
     p = pred.strip().lower().replace("_", " ")
-    
+
     # Check depth first
     if any(w in p for w in ["in front of", "behind"]):
         canon = "in_front_of" if "in front of" in p else "behind"
         return "depth", canon
 
     # Check spatial
-    spatial_keywords = ["right", "left", "above", "below", "under", "beneath", 
+    spatial_keywords = ["right", "left", "above", "below", "under", "beneath",
                         "near", "next to", "beside", "adjacent", "inside", "within", "overlapping"]
     if any(kw in p for kw in spatial_keywords):
         return "spatial", normalize_spatial_predicate(p)
-    
+
     # Standalone 'on' or 'in' without semantic verb
     if p in ("on", "in"):
         return "spatial", normalize_spatial_predicate(p)
@@ -92,140 +92,121 @@ def _parse_argument(argument: str):
 
 
 def build_scaffold(reasoning: list, sample: dict = None) -> list:
-    """
-    Deterministic pass: reasoning[] -> list of scaffold steps.
-    Each scaffold step is a dict describing what tool call(s) this step
-    needs and which prior-step variable(s) it depends on.
+    """Compile a conservative, auditable verification program.
+
+    GQA role s means the NEW entity is the subject; o means it is the object.
+    Unnamed relation entities are proposed visually, never from the target answer.
     """
     scaffold = []
-    gt_answer = sample.get("answer", "") if sample else ""
-
+    labels = {}
+    # VisCoT GQA bboxs annotate the region relevant to the terminal query.
+    # Use them as explicit SFT localization supervision, never as answer text.
+    annotated_target = None
+    regions = sample.get("bboxs", []) if sample else []
+    if regions and reasoning and reasoning[-1]["operation"] == "query":
+        last_deps = reasoning[-1].get("dependencies", [])
+        cursor = last_deps[0] if len(last_deps) == 1 else None
+        visited = set()
+        while isinstance(cursor, int) and 0 <= cursor < len(reasoning)-1 and cursor not in visited:
+            visited.add(cursor)
+            node = reasoning[cursor]
+            if node["operation"] in {"select", "relate"}:
+                annotated_target = cursor
+                break
+            next_deps = node.get("dependencies", [])
+            cursor = next_deps[0] if node["operation"].startswith("filter") and len(next_deps) == 1 else None
     for i, step in enumerate(reasoning):
-        op = step["operation"]
-        deps = step.get("dependencies", [])
+        op, deps = step["operation"], step.get("dependencies", [])
         parsed = _parse_argument(step["argument"])
-        var_name = f"e{i}"
-
-        entry = {
-            "step_index": i,
-            "operation": op,
-            "var_name": var_name,
-            "dependencies": deps,
-            "parsed": parsed,
-            "needs_review": parsed.get("_needs_review", False),
-        }
-
-        if op == "select":
-            raw_label = parsed.get("label", parsed.get("_raw", ""))
-            label = raw_label
-            # If label is an abstract category and ground truth is available, suggest concrete label
-            if label.lower() in ABSTRACT_CATEGORIES and gt_answer:
-                label = gt_answer
-            entry["tool_call"] = f'{var_name} = detect_and_crop(img_path, "{label}")\nassert len({var_name}) > 0, "No {label} detected"'
-            entry["claim_template"] = f'There is a {label} in the image.'
-
+        var = f"e{i}"
+        entry = dict(step_index=i, operation=op, var_name=var, dependencies=deps,
+                     parsed=parsed, needs_review=False, tool_call="", claim_template="")
+        def defer(reason):
+            entry.update(needs_review=True, review_reason=reason,
+                         tool_call=f"# REVIEW: {reason}", claim_template=reason)
+        valid_dep = len(deps) == 1 and isinstance(deps[0], int) and 0 <= deps[0] < i
+        dep = f"e{deps[0]}" if valid_dep else None
+        if op == "select" and not deps and parsed.get("label"):
+            label = parsed["label"]
+            labels[i] = label
+            source = f"annotated_regions(img_path, {regions!r})" if i == annotated_target else f"detect_and_crop(img_path, {label!r})"
+            entry["tool_call"] = f'{var} = {source}\nassert len({var}) > 0, "Uncertain: no detection"'
+            entry["claim_template"] = f"There is a {label} in the image."
+        elif not valid_dep:
+            defer("Unsupported or malformed dependencies")
         elif op == "relate":
-            pred = parsed.get("predicate", "<?>")
-            family, canon_pred = classify_predicate(pred)
-            dep_var = f"e{deps[0]}" if deps else "e0"
-            raw_new_label = parsed.get("new_label")
-            new_label = raw_new_label
-
-            if new_label and new_label.lower() in ABSTRACT_CATEGORIES and gt_answer:
-                new_label = gt_answer
-
-            if new_label:
-                if family == "spatial":
-                    tool_call = (
-                        f'{var_name}_candidates = detect_and_crop(img_path, "{new_label}")\n'
-                        f'assert len({var_name}_candidates) > 0, "No {new_label} candidates detected"\n'
-                        f'{var_name} = [c for c in {var_name}_candidates if check_spatial_relation(c, {dep_var}[0], "{canon_pred}")]\n'
-                        f'assert len({var_name}) > 0, "No {new_label} found {canon_pred} the reference object"'
-                    )
-                elif family == "depth":
-                    tool_call = (
-                        f'{var_name}_candidates = detect_and_crop(img_path, "{new_label}")\n'
-                        f'assert len({var_name}_candidates) > 0, "No {new_label} candidates detected"\n'
-                        f'{var_name} = [c for c in {var_name}_candidates if estimate_depth_order(c, {dep_var}[0]) == "{var_name}_in_front"]\n'
-                        f'assert len({var_name}) > 0, "No {new_label} in front of reference object"'
-                    )
+            label, role = parsed.get("new_label"), parsed.get("role")
+            pred = parsed.get("predicate", "")
+            if role not in ("s", "o") or not pred:
+                defer("Relation needs an explicit entity label and subject/object role")
+            else:
+                labels[i] = label or "related object"
+                proposal = ""
+                detection_label = repr(label)
+                if i != annotated_target and (not label or label.lower() in ABSTRACT_CATEGORIES):
+                    proposal = f'{var}_label = vlm_related_name(img_path, {dep}, {pred!r}, {role!r})\n'
+                    detection_label = f"{var}_label"
+                    label = label or "related object"
+                label = label or "target object"
+                reference_label = labels.get(deps[0], "reference entity")
+                subject, obj = ("c", "reference") if role == "s" else ("reference", "c")
+                subject_label, object_label = (label, reference_label) if role == "s" else (reference_label, label)
+                # Bind BOTH detected boxes. on/in/depth require visual evidence,
+                # not an overlap or ground-plane heuristic.
+                relation = normalize_spatial_predicate(pred)
+                geometric = pred.strip().lower() in {"left of", "to the left of", "right of", "to the right of", "above", "below"}
+                if geometric:
+                    check = f'check_spatial_relation({subject}, {obj}, {relation!r})'
                 else:
-                    # Semantic: use clean English question for vlm_probe
-                    q_text = f"Is this {new_label} {pred} the object?"
-                    tool_call = (
-                        f'{var_name}_candidates = detect_and_crop(img_path, "{new_label}")\n'
-                        f'assert len({var_name}_candidates) > 0, "No {new_label} candidates detected"\n'
-                        f'{var_name} = [c for c in {var_name}_candidates if vlm_probe(img_path, c, "{q_text}")]\n'
-                        f'assert len({var_name}) > 0, "No {new_label} found satisfying relation: {pred}"'
-                    )
-
-                entry["tool_call"] = tool_call
-                entry["claim_template"] = f'The {new_label} is {pred} the entity from step {deps}.'
-            else:
-                if family == "spatial":
-                    tool_call = (
-                        f'{var_name} = [c for c in {dep_var} if check_spatial_relation(c, e0[0], "{canon_pred}")]\n'
-                        f'assert len({var_name}) > 0, "Relation {canon_pred} not satisfied"'
-                    )
-                else:
-                    tool_call = (
-                        f'{var_name} = [c for c in {dep_var} if vlm_probe(img_path, c, "Is it {pred}?")\n'
-                        f'assert len({var_name}) > 0, "Relation {pred} not satisfied"'
-                    )
-                entry["tool_call"] = tool_call
-                entry["claim_template"] = f'The entity from step {deps} is {pred}.'
-
-            entry["predicate_family"] = family
-            entry["canonical_predicate"] = canon_pred
-
-        elif op == "filter hposition":
-            dep_var = f"e{deps[0]}" if deps else "e0"
-            side = parsed.get("_raw", step.get("argument", "right")).strip().lower()
-            if "right" in side:
-                tool_call = (
-                    f'# Select rightmost candidate by x-center: (xmin + xmax) / 2\n'
-                    f'{var_name} = [max({dep_var}, key=lambda b: (b[0] + b[2]) / 2)]\n'
-                    f'assert len({var_name}) > 0, "No entity found on the right side"'
+                    check = f'vlm_relation(img_path, {subject}, {obj}, {pred!r}, {subject_label!r}, {object_label!r})'
+                candidate_source = (f"annotated_regions(img_path, {regions!r})" if i == annotated_target else
+                                    f"detect_and_crop(img_path, {detection_label})")
+                entry["tool_call"] = (
+                    proposal + f'{var}_candidates = {candidate_source}\n'
+                    f'assert len({var}_candidates) > 0, "Uncertain: no relation candidates"\n'
+                    f'{var} = [c for c in {var}_candidates if any({check} for reference in {dep})]\n'
+                    f'assert len({var}) > 0, "Uncertain: relation not verified"'
                 )
-                entry["claim_template"] = f'The entity from step {deps} is located on the right side.'
+                entry["claim_template"] = f"The {subject_label} is {pred} the {object_label}."
+                entry.update(subject_role=role, predicate_family="spatial" if geometric else "semantic")
+        elif op in {"filter hposition", "filter vposition"}:
+            side = step["argument"].strip().lower()
+            axis = "horizontal" if op == "filter hposition" else "vertical"
+            if side not in ({"left", "right"} if axis == "horizontal" else {"top", "bottom"}):
+                defer("Unsupported position argument")
             else:
-                tool_call = (
-                    f'# Select leftmost candidate by x-center: (xmin + xmax) / 2\n'
-                    f'{var_name} = [min({dep_var}, key=lambda b: (b[0] + b[2]) / 2)]\n'
-                    f'assert len({var_name}) > 0, "No entity found on the left side"'
-                )
-                entry["claim_template"] = f'The entity from step {deps} is located on the left side.'
-            entry["tool_call"] = tool_call
-
-        elif op == "query":
-            attr = parsed.get("attribute", "name")
-            dep_var = f"e{deps[0]}" if deps else "e0"
-            if attr == "name":
-                val = f'"{gt_answer}"' if gt_answer else f'"{parsed.get("label", "object")}"'
-                entry["tool_call"] = f'final_answer = {val}  # derived object name answering the question'
-            elif attr == "color":
-                entry["tool_call"] = f'{var_name} = get_color(img_path, {dep_var}[0])\nfinal_answer = {var_name}'
-            else:
-                entry["tool_call"] = f'final_answer = "{gt_answer}"'
-            entry["claim_template"] = f'The {attr} of the entity from step {deps} answers the question.'
-
-        elif op == "filter":
-            dep_var = f"e{deps[0]}" if deps else "e0"
-            filter_arg = parsed.get("_raw", step.get("argument", ""))
-            entry["tool_call"] = (
-                f'# Filter {dep_var} by attribute/state: {filter_arg}\n'
-                f'{var_name} = [c for c in {dep_var} if vlm_probe(img_path, c, "Is this {filter_arg}?")\n'
-                f'assert len({var_name}) > 0, "No candidate matches filter {filter_arg}"'
-            )
-            entry["claim_template"] = f'The entity from step {deps} is filtered by {filter_arg}.'
-
+                labels[i] = labels.get(deps[0], "object")
+                entry["tool_call"] = (f'{var} = select_position(img_path, {dep}, {axis!r}, {side!r})\n'
+                                      f'assert len({var}) > 0, "Uncertain: no object on requested side"')
+                entry["claim_template"] = f"The reference object is on the {side} side of the image."
+        elif op == "filter" or op in {"filter pose", "filter material", "filter size", "filter tone",
+                                      "filter activity", "filter shape", "filter height"}:
+            labels[i] = labels.get(deps[0], "object")
+            attribute = step["argument"].strip()
+            negated = re.fullmatch(r"not\((.+)\)", attribute)
+            if negated:
+                attribute = "not " + negated.group(1)
+            question = f"Is this object {attribute}?"
+            entry["tool_call"] = (f'{var} = [c for c in {dep} if vlm_probe(img_path, c, {question!r})]\n'
+                                  f'assert len({var}) > 0, "Uncertain: attribute not verified"')
+            entry["claim_template"] = question
+        elif op == "query" and parsed.get("attribute") in {"name", "color", "material", "shape", "type"}:
+            attr = parsed["attribute"]
+            entry["tool_call"] = (f'{var}_answers = [vlm_query(img_path, c, {attr!r}) for c in {dep}]\n'
+                                  f'{var} = answer_consensus({var}_answers)\n'
+                                  f'final_answer = {var}')
+            entry["claim_template"] = f"Read the {attr} of the verified object from the image."
         else:
-            entry["tool_call"] = f'# UNHANDLED OP "{op}" -- flag for review'
-            entry["claim_template"] = f'(unhandled operation: {op})'
-            entry["needs_review"] = True
-
+            defer(f"Unsupported operation: {op}")
+        entry["localization_source"] = "viscot_annotation" if i == annotated_target else "model"
         scaffold.append(entry)
+    if scaffold and scaffold[-1]["operation"] != "query":
+        scaffold[-1].update(needs_review=True, review_reason="No terminal answer query")
     return scaffold
+
+
+def canonical_code(scaffold):
+    return "\n\n".join(step["tool_call"] for step in scaffold)
 
 
 def build_generation_prompt(sample: dict, scaffold: list) -> str:
@@ -248,8 +229,9 @@ Ground-truth answer: {sample.get('answer', '<unknown>')}
 Original CoT: {sample.get('thought', '')}
 
 DETERMINISTIC SCAFFOLD (Follow these exact entities and relations step-by-step.
-Implement every tool_call_skeleton with executable Python code, assigning results
-to stateful variables e0, e1, ... as specified):
+Copy every tool_call_skeleton exactly, in order, into one Python block.
+Only comments and whitespace may differ. Do not add fallbacks, weaken checks,
+change arguments, or assign the supplied answer to final_answer):
 
 {scaffold_text}
 

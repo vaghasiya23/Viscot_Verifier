@@ -23,53 +23,85 @@ _vlm_processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct")
 print("[probe.py] VLM probe ready.")
 
 
-def vlm_probe(image_path: str, bbox: list, question: str) -> bool:
-    """
-    Crops the image to bbox = [xmin, ymin, xmax, ymax], asks the VLM a
-    yes/no question about that crop, returns True/False.
+class UncertainVisualEvidence(RuntimeError):
+    pass
 
-    Use this for:
-    - Semantic relations: "Is this person wearing a shirt?"
-    - Attributes/states: "Is this door open?"
-    - Identity verification: "Is this a girl?"
-    - Anything check_spatial_relation/get_color/read_text_ocr can't handle.
-    """
-    # Crop the image to the bounding box region
-    image = Image.open(image_path).convert("RGB")
-    xmin, ymin, xmax, ymax = bbox
-    crop = image.crop((xmin, ymin, xmax, ymax))
 
-    # Save temp crop (Qwen2-VL needs a file path or PIL image)
-    import tempfile, os
-    tmp_path = os.path.join(tempfile.gettempdir(), "vlm_probe_crop.jpg")
-    crop.save(tmp_path)
-
-    # Build the prompt: force a yes/no answer
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": tmp_path},
-                {"type": "text", "text": f"Answer with ONLY 'yes' or 'no'. {question}"},
-            ],
-        }
-    ]
-
+def _ask(image, question, max_tokens=24):
+    messages = [{"role": "user", "content": [
+        {"type": "image", "image": image}, {"type": "text", "text": question}]}]
     text = _vlm_processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = _vlm_processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    ).to(_vlm_model.device)
+    images, videos = process_vision_info(messages)
+    inputs = _vlm_processor(text=[text], images=images, videos=videos,
+                            padding=True, return_tensors="pt").to(_vlm_model.device)
+    with torch.inference_mode():
+        ids = _vlm_model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
+    answer = _vlm_processor.batch_decode(
+        [out[len(inp):] for inp, out in zip(inputs.input_ids, ids)],
+        skip_special_tokens=True)[0].strip().lower()
+    print(f"      [VLM Probe] Q: {question!r} -> A: {answer!r}")
+    return answer
 
-    generated_ids = _vlm_model.generate(**inputs, max_new_tokens=10)
-    trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
-    answer = _vlm_processor.batch_decode(trimmed, skip_special_tokens=True)[0].strip().lower()
 
-    print(f"      [VLM Probe] Q: '{question}' -> A: '{answer}'")
+def _yes_no(image, question):
+    answer = _ask(image, "Answer only yes, no, or unknown if unclear. " + question)
+    answer = answer.rstrip(".!?")
+    if answer not in {"yes", "no"}:
+        raise UncertainVisualEvidence("Visual probe did not give a definite yes/no answer")
+    return answer == "yes"
 
-    # Parse yes/no
-    return answer.startswith("yes")
+
+def vlm_probe(image_path, bbox, question):
+    with Image.open(image_path) as source:
+        crop = source.convert("RGB").crop(tuple(bbox))
+    return _yes_no(crop, question)
+
+
+def vlm_relation(image_path, subject_box, object_box, predicate, subject_label, object_label):
+    # The full image preserves context; marked boxes bind the two referents.
+    from verification_utils import box_iou
+    if box_iou(subject_box, object_box) >= 0.9:
+        return False  # Skip self-pairs; other distinct pairs may establish the relation.
+    from PIL import ImageDraw
+    with Image.open(image_path) as source:
+        image = source.convert("RGB")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle(tuple(subject_box), outline="red", width=3)
+    draw.rectangle(tuple(object_box), outline="blue", width=3)
+    question = (f"Is the {subject_label} in the RED box {predicate} the "
+                f"{object_label} in the BLUE box? Judge only these two marked objects.")
+    return _yes_no(image, question)
+
+
+def vlm_query(image_path, bbox, attribute):
+    if attribute not in {"name", "type", "color", "material", "shape"}:
+        raise ValueError("Unsupported visual query attribute")
+    with Image.open(image_path) as source:
+        crop = source.convert("RGB").crop(tuple(bbox))
+    question = ("Name the object in this image in one or two words." if attribute in {"name", "type"}
+                else f"What is the {attribute} of the object?")
+    answer = _ask(crop, question + " Give only the answer.")
+    if not answer or answer.rstrip(".!?") in {"unknown", "unclear", "none", "n/a"}:
+        raise UncertainVisualEvidence("Visual answer is uncertain")
+    return answer
+
+
+def vlm_related_name(image_path, references, predicate, role):
+    """Propose an unnamed entity without seeing the dataset answer.
+
+    This is only a proposal: detection and a bound pair relation check follow.
+    """
+    if not references or role not in {"s", "o"}:
+        raise ValueError("Missing reference boxes or invalid relation role")
+    from PIL import ImageDraw
+    with Image.open(image_path) as source:
+        image = source.convert("RGB")
+    draw = ImageDraw.Draw(image)
+    for box in references:
+        draw.rectangle(tuple(box), outline="red", width=3)
+    question = (f"What object is {predicate} the objects outlined in red?" if role == "s" else
+                f"What are the objects outlined in red {predicate}?")
+    answer = _ask(image, question + " Answer with only the related object name, in one or two words.")
+    if not answer or answer.rstrip(".!?") in {"unknown", "unclear", "none", "n/a"} or len(answer.split()) > 6:
+        raise UncertainVisualEvidence("Cannot propose an unambiguous related object label")
+    return answer.rstrip(".!?")

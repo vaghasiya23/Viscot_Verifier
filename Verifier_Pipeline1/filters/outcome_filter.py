@@ -1,77 +1,28 @@
-"""
-outcome_filter.py
+"""Conservative answer agreement; a model verdict alone proves nothing."""
+import re
 
-Checks whether the trace's derived answer is consistent with the ground-truth answer.
-Supports common-sense semantic matching (synonyms, singular/plural, category entailment).
-"""
-
-# Common-sense semantic equivalences and category entailment
-SEMANTIC_SYNONYMS = {
-    "children": {"child", "children", "kid", "kids", "person", "people", "boy", "boys", "girl", "girls"},
-    "child": {"child", "children", "kid", "kids", "person", "people"},
-    "person": {"person", "people", "man", "men", "woman", "women", "child", "children", "boy", "girl"},
-    "sofa": {"sofa", "couch", "settee", "furniture"},
-    "couch": {"sofa", "couch", "furniture"},
-    "cabinet": {"cabinet", "cupboard", "shelf", "furniture"},
-    "rock": {"rock", "stone", "boulder"},
-    "hot dog": {"hot dog", "hotdog", "frankfurter", "food", "fast food"},
-    "pants": {"pants", "trousers", "jeans", "slacks", "clothing", "apparel"},
-    "shirt": {"shirt", "t-shirt", "top", "clothing", "apparel"},
-    "bird": {"bird", "animal"},
-    "horse": {"horse", "animal"},
-}
+ALIASES = ({"sofa", "couch"}, {"cabinet", "cupboard"}, {"pants", "trousers"},
+           {"child", "children"}, {"hot dog", "hotdog"})
 
 
-def are_answers_compatible(derived: str, ground_truth: str) -> bool:
-    """Checks exact match, substring inclusion, or common-sense semantic equivalence."""
-    d = derived.strip().lower()
-    gt = ground_truth.strip().lower()
-
-    # Exact or substring match
-    if d == gt or d in gt or gt in d:
-        return True
-
-    # Check synonym / entailment mapping
-    if gt in SEMANTIC_SYNONYMS and d in SEMANTIC_SYNONYMS[gt]:
-        return True
-    if d in SEMANTIC_SYNONYMS and gt in SEMANTIC_SYNONYMS[d]:
-        return True
-
-    return False
+def normalize(answer):
+    return " ".join(str(answer).strip().lower().rstrip(".!?").split())
 
 
-def check(exec_result: dict, sample: dict, verdict_text: str) -> dict:
-    """
-    Returns {"status": "valid" | "correctly_invalidated" | "failed", "reason": str}
-    """
-    gt_answer = str(sample.get("answer", "")).strip().lower()
-    if not gt_answer:
-        return {"status": "failed", "reason": "No ground-truth answer in sample"}
+def are_answers_compatible(derived, ground_truth):
+    d, gt = normalize(derived), normalize(ground_truth)
+    return bool(d and gt) and (d == gt or any(d in group and gt in group for group in ALIASES))
 
-    verdict_lower = verdict_text.lower()
-    says_valid = "invalid" not in verdict_lower and "valid" in verdict_lower
-    says_invalid = "invalid" in verdict_lower
 
-    local_scope = exec_result.get("local_scope", {})
-    code_answer = local_scope.get("final_answer", None)
-
-    if says_invalid:
-        return {
-            "status": "correctly_invalidated",
-            "reason": "Verdict is INVALID -- trace correctly identified a broken claim. Route to invalidated bucket, not golden.",
-        }
-
-    if not says_valid:
-        return {"status": "failed", "reason": "Verdict text doesn't clearly state VALID or INVALID"}
-
-    if code_answer is None:
-        return {"status": "failed", "reason": "Verdict says VALID but code never set final_answer"}
-
-    code_answer_str = str(code_answer).strip().lower()
-    if not are_answers_compatible(code_answer_str, gt_answer):
-        return {
-            "status": "failed",
-            "reason": f"Verdict says VALID but final_answer='{code_answer_str}' is not compatible with ground truth='{gt_answer}'",
-        }
-
-    return {"status": "valid", "reason": "VALID verdict, final_answer matches ground truth"}
+def check(exec_result, sample, verdict_text):
+    if not exec_result.get("ok"):
+        return {"status": "failed", "reason": "Execution did not verify all claims"}
+    if not re.match(r"^VALID\b", verdict_text.strip(), re.I) or re.search(r"\bINVALID\b", verdict_text, re.I):
+        return {"status": "failed", "reason": "No unambiguous VALID verdict; requires review"}
+    answer = exec_result.get("local_scope", {}).get("final_answer")
+    events = exec_result.get("evidence", [])
+    if not any(e["tool"] == "vlm_query" and e.get("result") == answer for e in events):
+        return {"status": "failed", "reason": "Answer lacks a recorded visual query"}
+    if answer is None or not are_answers_compatible(answer, sample.get("answer", "")):
+        return {"status": "failed", "reason": f"Visual answer {answer!r} disagrees with target"}
+    return {"status": "valid", "reason": "Complete execution and visual answer agreement"}

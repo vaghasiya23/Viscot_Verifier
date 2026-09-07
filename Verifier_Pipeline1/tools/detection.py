@@ -9,6 +9,7 @@ Box format returned everywhere in this project: [xmin, ymin, xmax, ymax] (flat l
 import torch
 from transformers import pipeline
 from PIL import Image
+from verification_utils import deduplicate_boxes
 
 print("[detection.py] Loading OWLv2 (google/owlv2-base-patch16-ensemble)...")
 _detector = pipeline(
@@ -32,5 +33,6 @@ def detect_and_crop(image_path: str, object_query: str, threshold: float = 0.1) 
     """
     image = Image.open(image_path).convert("RGB")
     predictions = _detector(image, candidate_labels=[object_query])
-    boxes = [p for p in predictions if p["score"] > threshold]
-    return [[b["box"]["xmin"], b["box"]["ymin"], b["box"]["xmax"], b["box"]["ymax"]] for b in boxes]
+    boxes = sorted((p for p in predictions if p["score"] > threshold), key=lambda p: p["score"], reverse=True)
+    raw_boxes = [[b["box"]["xmin"], b["box"]["ymin"], b["box"]["xmax"], b["box"]["ymax"]] for b in boxes]
+    return deduplicate_boxes(raw_boxes)

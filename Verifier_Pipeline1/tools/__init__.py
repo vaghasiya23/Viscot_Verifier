@@ -7,9 +7,11 @@ scope dict separately in each script; import it from here.
 """
 from .detection import detect_and_crop
 from .spatial import check_spatial_relation, compare_size, resolve_left_right, estimate_depth_order
-from .probe import vlm_probe, MOCK_MODE as VLM_PROBE_MOCK_MODE
+from .probe import vlm_probe, vlm_relation, vlm_query, vlm_related_name, MOCK_MODE as VLM_PROBE_MOCK_MODE
 from .ocr import read_text_ocr
 from .color import get_color
+
+from verification_utils import answer_consensus, select_position, annotated_regions
 
 TOOL_REGISTRY = {
     "detect_and_crop": detect_and_crop,
@@ -18,6 +20,12 @@ TOOL_REGISTRY = {
     "resolve_left_right": resolve_left_right,
     "estimate_depth_order": estimate_depth_order,
     "vlm_probe": vlm_probe,
+    "vlm_relation": vlm_relation,
+    "vlm_query": vlm_query,
+    "vlm_related_name": vlm_related_name,
+    "answer_consensus": answer_consensus,
+    "select_position": select_position,
+    "annotated_regions": annotated_regions,
     "read_text_ocr": read_text_ocr,
     "get_color": get_color,
 }
@@ -30,4 +38,4 @@ if VLM_PROBE_MOCK_MODE:
         stacklevel=2,
     )
 else:
-    print("[tools] All tools loaded with REAL backends. Traces can be trusted.")
+    print("[tools] Real tool backends loaded; acceptance still requires evidence checks and audit.")

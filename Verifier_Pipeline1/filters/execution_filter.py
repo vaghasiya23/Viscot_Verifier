@@ -21,7 +21,7 @@ def _timeout_handler(signum, frame):
     raise TimeoutError("Execution exceeded time limit")
 
 
-def run(code: str, img_path: str, timeout_seconds: int = 30) -> dict:
+def run(code: str, img_path: str, timeout_seconds: int = 120) -> dict:
     """
     Executes `code` with img_path bound and all tools available.
     Returns {"ok": bool, "local_scope": dict, "error": str|None}.
@@ -31,21 +31,34 @@ def run(code: str, img_path: str, timeout_seconds: int = 30) -> dict:
     if not code:
         return {"ok": False, "local_scope": {}, "error": "No python code block found"}
 
-    local_scope = dict(TOOL_REGISTRY)
+    evidence = []
+    def record(name, tool):
+        def wrapped(*args, **kwargs):
+            if len(evidence) >= 64:
+                raise RuntimeError("Uncertain: tool-call budget exceeded")
+            event = {"tool": name, "args": args, "kwargs": kwargs}
+            evidence.append(event)
+            try:
+                result = tool(*args, **kwargs)
+                event["result"] = result
+                return result
+            except Exception as exc:
+                event["error"] = f"{type(exc).__name__}: {exc}"
+                raise
+        return wrapped
+    local_scope = {name: record(name, tool) for name, tool in TOOL_REGISTRY.items()}
     local_scope["img_path"] = img_path
 
-    signal.signal(signal.SIGALRM, _timeout_handler)
+    previous_handler = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(timeout_seconds)
     try:
-        exec(code, {"__builtins__": __builtins__}, local_scope)
-        return {"ok": True, "local_scope": local_scope, "error": None}
+        exec(code, local_scope, local_scope)
+        return {"ok": True, "local_scope": local_scope, "evidence": evidence, "error": None}
     except AssertionError as e:
-        # Assertion failures are a VALID outcome for INVALID-verdict traces
-        # -- not necessarily a bad trace, just one that correctly caught a
-        # broken claim. Caller (pipeline.py) decides what to do with this
-        # based on whether the trace's own <final_verdict> says INVALID.
-        return {"ok": False, "local_scope": local_scope, "error": f"AssertionError: {e}", "is_assertion": True}
+        # Failed verification is not proof that the source claim is false.
+        return {"ok": False, "local_scope": local_scope, "evidence": evidence, "error": f"AssertionError: {e}", "is_assertion": True}
     except Exception as e:
-        return {"ok": False, "local_scope": local_scope, "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
+        return {"ok": False, "local_scope": local_scope, "evidence": evidence, "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
     finally:
         signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)

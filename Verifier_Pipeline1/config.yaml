@@ -1,12 +1,17 @@
 models:
-  coder: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  coder_provider: "gemini"
+  coder: "gemini-3.5-flash-lite"
   detector: "google/owlv2-base-patch16-ensemble"
   prober: "Qwen/Qwen2-VL-2B-Instruct"
 
 generation:
-  num_candidates_stage_A: 5
-  temperature: 0.6
-  max_tokens: 1024
+  num_candidates_stage_A: 2
+  stop_after_valid: 1  # Spend another request only if the first candidate fails.
+  temperature: 1.0
+  max_tokens: 16384
+  thinking_level: "high"
+  min_interval_seconds: 30
+  max_retries: 3
 
 data:
   raw_json: "data/raw/gqa_300_samples.json"
