@@ -1,0 +1,14 @@
+models:
+  generator: "gemini-3.6-flash"
+  detector: "google/owlv2-base-patch16-ensemble"
+  probe: "Qwen/Qwen2-VL-2B-Instruct"
+
+paths:
+  raw_data: "data/raw/gqa_300_samples.json"
+  images_dir: "data/raw/images"
+  sft_golden: "data/sft/golden_traces.jsonl"
+  sft_rejected: "data/sft/rejected_traces.jsonl"
+
+generation:
+  max_retries: 3
+  timeout_seconds: 30
